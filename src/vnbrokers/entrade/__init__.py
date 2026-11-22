@@ -1,147 +1,22 @@
 import pandas as pd
 import requests
 
+from vnbrokers.base import BaseBroker, LONG_DEAL_TYPE, SHORT_DEAL_TYPE
+
 USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36'
 BANK_MARGIN_PORTFOLIO_ID = 123
-
-LONG_DEAL_TYPE = "NB"
-SHORT_DEAL_TYPE = "NS"
 TRADING_FEE = 0.7
 
 
-class Broker:
+class Broker(BaseBroker):
+    TRADING_FEE = TRADING_FEE
+
     def __init__(self, symbol, investor_id, investor_account_id, bearer_token, bank_margin_portfolio_id=None):
-        self.symbol = symbol
+        super().__init__(symbol)
         self.bankMarginPortfolioId = bank_margin_portfolio_id or BANK_MARGIN_PORTFOLIO_ID
         self.investorId = investor_id
         self.investorAccountId = investor_account_id
         self.bearer_token = bearer_token
-        self.do_date = ''
-        self.opened_qty = 0
-        self.entry_price = 0
-        self.exit_price = 0
-        self.entry_time = ''
-        self.is_long_open = False
-        self.is_short_open = False
-        self.history = []
-        self._trades = pd.DataFrame(columns=("EntryTime", "EntryPrice", "ExitTime", "ExitPrice", "Type", "Profit"))
-        self.mode = 'live'
-        self.number_of_deal = 0
-        self.qty = 0
-        self.profit = 0
-        self.total_profit = 0
-        self.stoploss = 0
-        self.force_stoploss = 0
-        self.take_profit = 0
-        self.deal_id = 0
-        self.trigger = False
-        self.logs = []
-
-    def set_qty(self, new_qty):
-        self.qty = new_qty
-
-    def set_stoploss(self, price):
-        self.stoploss = price
-
-    def set_force_stoploss(self, price):
-        self.force_stoploss = price
-
-    def set_take_profit(self, price):
-        self.take_profit = price
-
-    def set_trigger(self, is_trigger):
-        self.trigger = is_trigger
-
-    def open_long_deal(self, price, order_type="LO"):
-        self.trigger_before()
-        if self.mode == 'live':
-            self.opened_qty = self.qty
-            self.entry_price = price
-            self.is_long_open = True
-            self.history.append('(Long) with price {} at {}'.format(price, self.do_date))
-        deal_type = LONG_DEAL_TYPE
-        try:
-            self.open_deal(deal_type, price, order_type)
-        except Exception as e:
-            print(f"Error opening long deal: {e}")
-        self.trigger_after()
-
-    def open_short_deal(self, price, order_type="LO"):
-        self.trigger_before()
-        if self.mode == 'live':
-            self.opened_qty = self.qty
-            self.entry_price = price
-            self.is_short_open = True
-            self.history.append('(Short) with price {} at {}'.format(price, self.do_date))
-        deal_type = SHORT_DEAL_TYPE
-        try:
-            self.open_deal(deal_type, price, order_type)
-        except Exception as e:
-            print(f"Error opening short deal: {e}")
-        self.trigger_after()
-
-    def close_all_open_deal(self, expected_price):
-        self.trigger_before()
-        if self.has_opened_deal():
-            self.qty = self.opened_qty
-            if self.is_long_open:
-                self.close_long_deal(expected_price, "MTL")
-            elif self.is_short_open:
-                self.close_short_deal(expected_price, "MTL")
-        self.trigger_after()
-        return False
-
-    def close_long_deal(self, price, order_type="LO"):
-        self.trigger_before()
-        self.exit_price = price
-        profit = price - self.entry_price - TRADING_FEE
-        profit = round(profit, 1)
-        self.profit = profit
-        self.opened_qty = 0
-        self.is_long_open = False
-        if self.mode == 'live':
-            self.history.append(
-                '  --- (Close - Long) with price {} at {}, profit: {}'.format(price, self.do_date, profit))
-        if self.mode == 'dev':
-            self.total_profit += profit
-            self.history.append(
-                '  --- (Close - Long) with price {} at {}, profit: {}, total profit: {}'.format(price, self.do_date,
-                                                                                                profit,
-                                                                                                self.total_profit))
-            self._trades.loc[len(self._trades)] = [self.entry_time, self.entry_price, self.do_date, price, "Long",
-                                                   profit]
-        deal_type = SHORT_DEAL_TYPE
-        try:
-            self.open_deal(deal_type, price, order_type)
-        except Exception as e:
-            print(f"Error closing long deal (opening short): {e}")
-        self.trigger_after()
-
-    def close_short_deal(self, price, order_type="LO"):
-        self.trigger_before()
-        self.exit_price = price
-        profit = self.entry_price - price - TRADING_FEE
-        profit = round(profit, 1)
-        self.profit = profit
-        self.opened_qty = 0
-        self.is_short_open = False
-        if self.mode == 'live':
-            self.history.append(
-                '  --- (Close - Short) with price {} at {}, profit: {}'.format(price, self.do_date, profit))
-        if self.mode == 'dev':
-            self.total_profit += profit
-            self.history.append(
-                '  --- (Close - Short) with price {} at {}, profit: {}, total profit: {}'.format(price, self.do_date,
-                                                                                                 profit,
-                                                                                                 self.total_profit))
-            self._trades.loc[len(self._trades)] = [self.entry_time, self.entry_price, self.do_date, price, "Short",
-                                                   profit]
-        deal_type = LONG_DEAL_TYPE
-        try:
-            self.open_deal(deal_type, price, order_type)
-        except Exception as e:
-            print(f"Error closing short deal (opening long): {e}")
-        self.trigger_after()
 
     def open_deal(self, deal_type, price, order_type="LO"):
         if not self.qty:
@@ -164,9 +39,12 @@ class Broker:
             price = round(price, 1)
             data['price'] = price
 
-        res = requests.post(url, json=data, headers=header)
-        if res.status_code != 200:
-            raise Exception(res.json())
+        try:
+            res = requests.post(url, json=data, headers=header)
+            if res.status_code != 200:
+                raise Exception(res.json())
+        except Exception as e:
+            print(f"Error opening deal ({deal_type}): {e}")
 
     def close_all_orders(self):
         url = "https://services.entrade.com.vn/entrade-api/derivative/orders?startIndex=1&endIndex=100&investorId=" + self.investorId
@@ -201,7 +79,9 @@ class Broker:
         url = 'https://services.entrade.com.vn/entrade-api/derivative/deals?endIndex=100&startIndex=1&investorId=' + self.investorId
         header = {
             'User-Agent': USER_AGENT,
-            'ContentType': 'application/json', 'Authorization': 'Bearer ' + self.bearer_token}
+            'ContentType': 'application/json',
+            'Authorization': 'Bearer ' + self.bearer_token
+        }
 
         try:
             x = requests.get(url, headers=header)
@@ -221,9 +101,9 @@ class Broker:
                     entry_time = pd.to_datetime(deal['modifiedDate']) + pd.DateOffset(hours=7)
                     entry_time = entry_time.strftime("%Y-%m-%d %H:%M:%S")
                     self.entry_time = entry_time
-                    if deal['side'] == 'NB':
+                    if deal['side'] == LONG_DEAL_TYPE:
                         self.is_long_open = True
-                    if deal['side'] == 'NS':
+                    if deal['side'] == SHORT_DEAL_TYPE:
                         self.is_short_open = True
                     break
         else:
@@ -231,9 +111,6 @@ class Broker:
             self.is_long_open = False
             self.is_short_open = False
             self.entry_time = ''
-
-    def set_risk_reward(self):
-        return
 
     def set_risk(self):
         deal_id = self.deal_id
@@ -282,24 +159,3 @@ class Broker:
         except:
             print("Error(**) while setting stoploss & take profit.")
             exit()
-
-    def has_opened_deal(self):
-        return True if self.opened_qty > 0 else False
-
-    def trigger_before(self):
-        if not self.trigger:
-            return
-        order_type = "Long" if self.is_long_open else ("Short" if self.is_short_open else "None")
-        msg = f"Before. Ordered qty: {self.opened_qty}, order_type: {order_type}, " \
-              f"entry_price: {self.entry_price}, entry_time: {self.entry_time}"
-        self.log(msg)
-
-    def trigger_after(self):
-        if not self.trigger:
-            return
-        msg = f"After. Ordered qty: {self.opened_qty}."
-        self.log(msg)
-
-    def log(self, msg):
-        if self.mode == 'live':
-            self.logs.append(msg)
